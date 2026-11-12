@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UI指摘ボード</title>
+<style>
+  :root {
+    --ink: #1f2937; --muted: #6b7280; --line: #d9dee6; --paper: #f6f7f9;
+    --accent: #e5484d; --blue: #2563eb; --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; color: var(--ink); background: var(--paper); }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .spacer { flex: 1; }
+  header .note { font-size: 12px; color: var(--muted); }
+  button { font: inherit; font-size: 13px; padding: 6px 12px; border: 1px solid var(--line); background: var(--card); border-radius: 8px; cursor: pointer; }
+  button:hover { background: #eef1f5; }
+  button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  button.primary:hover { background: #1d4ed8; }
+  button.danger:hover { background: #fdecec; border-color: #f0b4b6; }
+  main { display: flex; gap: 0; align-items: stretch; min-height: calc(100vh - 53px); }
+  .stage-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .toolbar { display: flex; gap: 6px; padding: 8px 12px; background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
+  .toolbar .tool[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .toolbar .hint { font-size: 12px; color: var(--muted); margin-left: 8px; }
+  .stage { flex: 1; overflow: auto; padding: 18px; background: #e8ebef; }
+  .stage.dragging { outline: 3px dashed var(--blue); outline-offset: -6px; }
+  .canvas-holder { max-width: 1100px; margin: 0 auto; }
+  canvas { display: block; width: 100%; height: auto; background: #fff; box-shadow: 0 2px 14px rgba(15, 23, 42, .18); touch-action: none; }
+  canvas.tool-pin, canvas.tool-text { cursor: crosshair; }
+  canvas.tool-arrow, canvas.tool-rect { cursor: crosshair; }
+  canvas.tool-select { cursor: default; }
+  .dropzone { max-width: 720px; margin: 48px auto; border: 2px dashed #aeb6c2; border-radius: 14px; background: var(--card); padding: 44px 28px; text-align: center; color: var(--muted); }
+  .dropzone h2 { color: var(--ink); font-size: 16px; margin: 0 0 8px; }
+  .dropzone p { margin: 6px 0; font-size: 13px; line-height: 1.7; }
+  aside { width: 348px; flex-shrink: 0; background: var(--card); border-left: 1px solid var(--line); padding: 12px; overflow-y: auto; max-height: calc(100vh - 53px); }
+  aside h2 { font-size: 13px; margin: 10px 0 8px; color: var(--muted); letter-spacing: .04em; }
+  .item { border: 1px solid var(--line); border-radius: 10px; padding: 8px; margin-bottom: 8px; background: #fbfcfd; }
+  .item.selected { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(37, 99, 235, .25); }
+  .item .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .badge { min-width: 24px; height: 24px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; }
+  .badge.text { background: #374151; }
+  .item .kind { font-size: 12px; color: var(--muted); }
+  .item .del { margin-left: auto; padding: 2px 8px; font-size: 12px; }
+  .item textarea, .item input[type="text"] { width: 100%; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; background: #fff; }
+  .empty-list { font-size: 13px; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; padding: 12px; text-align: center; }
+  .prompt-box textarea { width: 100%; font: inherit; font-size: 12.5px; line-height: 1.6; border: 1px solid var(--line); border-radius: 8px; padding: 8px; resize: vertical; }
+  .prompt-box pre { white-space: pre-wrap; word-break: break-word; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.6; max-height: 260px; overflow: auto; }
+  .out-buttons { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 10px 0 4px; }
+  .out-buttons button { padding: 9px 4px; font-size: 12.5px; }
+  .restore-note { font-size: 12px; color: var(--blue); margin: 0 0 8px; display: none; }
+  @media (max-width: 900px) {
+    main { flex-direction: column; }
+    aside { width: auto; border-left: none; border-top: 1px solid var(--line); max-height: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>UI指摘ボード</h1>
+  <span class="note">スクショに番号付きの指摘を置いて、AIへ渡す画像とプロンプトを作る</span>
+  <div class="spacer"></div>
+  <button id="open-file" type="button">画像を開く</button>
+  <button id="clear-all" type="button" class="danger">新規（全消し）</button>
+  <input id="file-input" type="file" accept="image/*" hidden>
+</header>
+<main>
+  <div class="stage-wrap">
+    <div class="toolbar" role="toolbar" aria-label="注釈ツール">
+      <button type="button" class="tool" data-tool="select" aria-pressed="true">選択・移動</button>
+      <button type="button" class="tool" data-tool="pin" aria-pressed="false">ピン</button>
+      <button type="button" class="tool" data-tool="arrow" aria-pressed="false">矢印</button>
+      <button type="button" class="tool" data-tool="rect" aria-pressed="false">囲み</button>
+      <button type="button" class="tool" data-tool="text" aria-pressed="false">テキスト</button>
+      <span class="hint" id="tool-hint">注釈をクリックで選択、ドラッグで移動、Deleteキーで削除</span>
+    </div>
+    <div class="stage" id="stage">
+      <div class="dropzone" id="dropzone">
+        <h2>画像を読み込む</h2>
+        <p>スクリーンショットを撮って、このページで <strong>Ctrl+V</strong> と押すのが一番速いです。</p>
+        <p>画像ファイルのドラッグ＆ドロップや、「画像を開く」からも読み込めます。</p>
+        <p>読み込んだ画像と作業内容は、このブラウザの中だけに保存されます（外部送信なし）。</p>
+      </div>
+      <div class="canvas-holder" id="canvas-holder" hidden>
+        <canvas id="board"></canvas>
+      </div>
+    </div>
+  </div>
+  <aside>
+    <p class="restore-note" id="restore-note">前回の作業を復元しました。</p>
+    <h2>指摘リスト</h2>
+    <div id="list"></div>
+    <div class="prompt-box">
+      <h2>AIへ渡すプロンプト（雛形は編集できます）</h2>
+      <textarea id="template" rows="7"></textarea>
+      <div class="out-buttons">
+        <button type="button" id="copy-image" class="primary">画像をコピー</button>
+        <button type="button" id="save-png">PNG保存</button>
+        <button type="button" id="copy-prompt" class="primary">プロンプトをコピー</button>
+      </div>
+      <h2>完成イメージ（プロンプト全文）</h2>
+      <pre id="prompt-preview"></pre>
+    </div>
+  </aside>
+</main>
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const canvas = $('#board'), ctx = canvas.getContext('2d');
+const stage = $('#stage'), dropzone = $('#dropzone'), holder = $('#canvas-holder');
+const listEl = $('#list'), templateEl = $('#template'), previewEl = $('#prompt-preview');
+
+const DEFAULT_TEMPLATE = '以下はアプリ／Webサイトの画面へのUI指摘です。添付画像の番号の位置を見て、各指摘を修正してください。\n\n\n{list}\n\n\n・修正したら、番号ごとに何を変えたか報告してください。\n・意図が分からない指摘は、勝手に決めずに質問してください。';
+templateEl.value = DEFAULT_TEMPLATE;
+
+let img = null, imgBlob = null, lastUrl = null;
+let anns = [], selectedId = null, tool = 'select', uidSeq = 1;
+const KINDS = { pin: 'ピン', arrow: '矢印', rect: '囲み', text: 'テキスト'};
+const numbered = (a) => a.type!== 'text';
+function numberOf(a) { let n = 0; for (const x of anns) { if (numbered(x)) n++; if (x === a) return n;} return n;}
+function metrics() {
+const W = img? img.naturalWidth: 0;
+return {
+pinR: Math.max(11, Math.min(30, W * 0.011)),
+lw: Math.max(3, Math.min(9, W * 0.0035)),
+fontPx: Math.max(13, Math.min(30, W * 0.014)),
+};
+}
+
+// ---------- autosave (IndexedDB, this browser only) ----------
+const DB_NAME = 'ui-shiteki-board', STORE = 'kv', KEY = 'state';
+function idbOpen() {
+return new Promise((res, rej) => {
+const r = indexedDB.open(DB_NAME, 1);
+r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+r.onsuccess = () => res(r.result);
+r.onerror = () => rej(r.error);
+});
+}
+async function idbPut(value) {
+try {
+const db = await idbOpen();
+await new Promise((res, rej) => { const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(value, KEY); tx.oncomplete = res; tx.onerror = () => rej(tx.error);});
+db.close();
+} catch { /* storage unavailable: session only */}
+}
+async function idbGet() {
+try {
+const db = await idbOpen();
+const v = await new Promise((res, rej) => { const rq = db.transaction(STORE).objectStore(STORE).get(KEY); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);});
+db.close(); return v;
+} catch { return null;}
+}
+async function idbClear() {
+try {
+const db = await idbOpen();
+await new Promise((res, rej) => { const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete(KEY); tx.oncomplete = res; tx.onerror = () => rej(tx.error);});
+db.close();
+} catch { /* ignore */}
+}
+let saveTimer = null;
+function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 350);}
+function saveNow() {
+if (!img) { idbClear(); return;}
+idbPut({ imgBlob, anns, template: templateEl.value, uidSeq});
+}
+
+// ---------- image loading ----------
+function loadImageBlob(blob) {
+if (!blob ||!blob.type ||!blob.type.startsWith('image/')) return;
+if (img && anns.length &&!confirm('今の注釈は消えます。新しい画像を読み込みますか？')) return;
+if (lastUrl) URL.revokeObjectURL(lastUrl);
+lastUrl = URL.createObjectURL(blob);
+const image = new Image();
+image.onload = () => {
+img = image; imgBlob = blob; anns = []; selectedId = null;
+canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+dropzone.hidden = true; holder.hidden = false;
+afterStructureChange();
+};
+image.onerror = () => alert('画像を読み込めませんでした。');
+image.src = lastUrl;
+}
+
+// ---------- drawing ----------
+function drawBadge(x, y, n, selected) {
+const { pinR, lw} = metrics();
+ctx.beginPath(); ctx.arc(x, y, pinR, 0, Math.PI * 2);
+ctx.fillStyle = '#e5484d'; ctx.fill();
+ctx.lineWidth = lw * 0.6; ctx.strokeStyle = '#fff'; ctx.stroke();
+if (selected) {
+ctx.beginPath(); ctx.arc(x, y, pinR + lw * 1.1, 0, Math.PI * 2);
+ctx.lineWidth = lw * 0.7; ctx.strokeStyle = '#2563eb'; ctx.stroke();
+}
+ctx.fillStyle = '#fff';
+ctx.font = '700 ' + (n >= 10? pinR * 0.82: pinR * 1.1) + 'px system-ui, sans-serif';
+ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+ctx.fillText(String(n), x, y + pinR * 0.06);
+}
+function drawArrow(a, draft) {
+const { lw} = metrics();
+const ang = Math.atan2(a.y2 - a.y1, a.x2 - a.x1);
+const head = Math.max(18, lw * 4.2);
+ctx.save(); if (draft) ctx.globalAlpha = 0.65;
+ctx.lineCap = 'round';
+if (a.id === selectedId) {
+ctx.strokeStyle = '#2563eb'; ctx.lineWidth = lw + 3;
+ctx.beginPath(); ctx.moveTo(a.x1, a.y1); ctx.lineTo(a.x2, a.y2); ctx.stroke();
+}
+ctx.strokeStyle = '#e5484d'; ctx.fillStyle = '#e5484d'; ctx.lineWidth = lw;
+ctx.beginPath(); ctx.moveTo(a.x1, a.y1); ctx.lineTo(a.x2, a.y2); ctx.stroke();
+ctx.beginPath();
+ctx.moveTo(a.x2, a.y2);
+ctx.lineTo(a.x2 - head * Math.cos(ang - 0.42), a.y2 - head * Math.sin(ang - 0.42));
+ctx.lineTo(a.x2 - head * Math.cos(ang + 0.42), a.y2 - head * Math.sin(ang + 0.42));
+ctx.closePath(); ctx.fill();
+ctx.restore();
+drawBadge(a.x1, a.y1, numberOf(a), a.id === selectedId);
+}
+function drawRect(a, draft) {
+const { lw} = metrics();
+const x = Math.min(a.x, a.x + a.w), y = Math.min(a.y, a.y + a.h), w = Math.abs(a.w), h = Math.abs(a.h);
+ctx.save(); if (draft) ctx.globalAlpha = 0.65;
+ctx.fillStyle = 'rgba(229,72,77,0.10)'; ctx.fillRect(x, y, w, h);
+ctx.lineWidth = lw; ctx.strokeStyle = '#e5484d'; ctx.strokeRect(x, y, w, h);
+if (a.id === selectedId) {
+ctx.lineWidth = lw * 0.7; ctx.strokeStyle = '#2563eb';
+ctx.strokeRect(x - lw * 1.2, y - lw * 1.2, w + lw * 2.4, h + lw * 2.4);
+}
+ctx.restore();
+drawBadge(x, y, numberOf(a), a.id === selectedId);
+}
+function textBox(a) {
+const { fontPx} = metrics();
+ctx.font = '600 ' + fontPx + 'px system-ui, sans-serif';
+const label = a.text && a.text.trim()? a.text: 'テキスト';
+return { w: ctx.measureText(label).width + fontPx * 1.1, h: fontPx * 1.7, label};
+}
+function drawText(a) {
+const { fontPx} = metrics();
+const box = textBox(a);
+ctx.beginPath(); ctx.roundRect(a.x, a.y, box.w, box.h, fontPx * 0.4);
+ctx.fillStyle = 'rgba(17,24,39,0.85)'; ctx.fill();
+if (a.id === selectedId) { ctx.lineWidth = 3; ctx.strokeStyle = '#2563eb'; ctx.stroke();}
+ctx.font = '600 ' + fontPx + 'px system-ui, sans-serif'; ctx.fillStyle = '#fff';
+ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+ctx.fillText(box.label, a.x + fontPx * 0.55, a.y + box.h / 2 + 1);
+}
+function drawAnn(a, draft) {
+if (a.type === 'pin') drawBadge(a.x, a.y, numberOf(a), a.id === selectedId);
+else if (a.type === 'arrow') drawArrow(a, draft);
+else if (a.type === 'rect') drawRect(a, draft);
+else if (a.type === 'text') drawText(a);
+}
+function redraw(draft) {
+if (!img) return;
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+ctx.drawImage(img, 0, 0);
+for (const a of anns) drawAnn(a, false);
+if (draft) drawAnn(draft, true);
+}
+
+// ---------- hit testing & pointer interaction ----------
+function distToSeg(px, py, x1, y1, x2, y2) {
+const dx = x2 - x1, dy = y2 - y1, L2 = dx * dx + dy * dy;
+let t = L2? ((px - x1) * dx + (py - y1) * dy) / L2: 0;
+t = Math.max(0, Math.min(1, t));
+return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+function hitTest(p) {
+const { pinR, lw} = metrics();
+for (let i = anns.length - 1; i >= 0; i--) {
+const a = anns[i];
+if (a.type === 'pin') {
+if (Math.hypot(p.x - a.x, p.y - a.y) <= pinR * 1.35) return a;
+} else if (a.type === 'arrow') {
+if (Math.hypot(p.x - a.x1, p.y - a.y1) <= pinR * 1.35) return a;
+if (distToSeg(p.x, p.y, a.x1, a.y1, a.x2, a.y2) <= Math.max(lw * 2, pinR * 0.7)) return a;
+} else if (a.type === 'rect') {
+const x = Math.min(a.x, a.x + a.w), y = Math.min(a.y, a.y + a.h), w = Math.abs(a.w), h = Math.abs(a.h);
+const tol = Math.max(lw * 2, pinR * 0.7);
+if (Math.hypot(p.x - x, p.y - y) <= pinR * 1.35) return a;
+if (p.x >= x - tol && p.x <= x + w + tol && p.y >= y - tol && p.y <= y + h + tol) return a;
+} else if (a.type === 'text') {
+const box = textBox(a);
+if (p.x >= a.x && p.x <= a.x + box.w && p.y >= a.y && p.y <= a.y + box.h) return a;
+}
+}
+return null;
+}
+function canvasPoint(e) {
+const r = canvas.getBoundingClientRect();
+return { x: (e.clientX - r.left) * canvas.width / r.width, y: (e.clientY - r.top) * canvas.height / r.height};
+}
+let drag = null;
+canvas.addEventListener('pointerdown', (e) => {
+if (!img) return;
+const p = canvasPoint(e);
+try { canvas.setPointerCapture(e.pointerId);} catch { /* ignore */}
+if (tool === 'pin') {
+const a = { id: uidSeq++, type: 'pin', x: p.x, y: p.y, comment: ''};
+anns.push(a); selectedId = a.id; afterStructureChange(); focusComment(a.id); return;
+}
+if (tool === 'text') {
+const a = { id: uidSeq++, type: 'text', x: p.x, y: p.y, text: ''};
+anns.push(a); selectedId = a.id; afterStructureChange(); focusComment(a.id); return;
+}
+if (tool === 'arrow' || tool === 'rect') { drag = { mode: 'draw', start: p, draft: null}; return;}
+const hit = hitTest(p);
+selectedId = hit? hit.id: null;
+updateSelectionUI(); redraw();
+if (hit) drag = { mode: 'move', ann: hit, start: p, orig: JSON.parse(JSON.stringify(hit))};
+});
+canvas.addEventListener('pointermove', (e) => {
+if (!drag ||!img) return;
+const p = canvasPoint(e);
+if (drag.mode === 'draw') {
+drag.draft = tool === 'arrow'
+? { id: -1, type: 'arrow', x1: drag.start.x, y1: drag.start.y, x2: p.x, y2: p.y, comment: ''}
+: { id: -1, type: 'rect', x: drag.start.x, y: drag.start.y, w: p.x - drag.start.x, h: p.y - drag.start.y, comment: ''};
+redraw(drag.draft);
+return;
+}
+const a = drag.ann, o = drag.orig, dx = p.x - drag.start.x, dy = p.y - drag.start.y;
+if (a.type === 'arrow') { a.x1 = o.x1 + dx; a.y1 = o.y1 + dy; a.x2 = o.x2 + dx; a.y2 = o.y2 + dy;}
+else { a.x = o.x + dx; a.y = o.y + dy;}
+redraw();
+});
+canvas.addEventListener('pointerup', () => {
+if (!drag) return;
+if (drag.mode === 'draw' && drag.draft) {
+const d = drag.draft;
+const len = d.type === 'arrow'? Math.hypot(d.x2 - d.x1, d.y2 - d.y1): Math.hypot(d.w, d.h);
+if (len > 12) {
+if (d.type === 'rect') {
+const x = Math.min(d.x, d.x + d.w), y = Math.min(d.y, d.y + d.h);
+d.x = x; d.y = y; d.w = Math.abs(d.w); d.h = Math.abs(d.h);
+}
+d.id = uidSeq++; anns.push(d); selectedId = d.id;
+afterStructureChange(); focusComment(d.id);
+} else redraw();
+} else if (drag.mode === 'move') scheduleSave();
+drag = null;
+});
+canvas.addEventListener('pointercancel', () => { drag = null; redraw();});
+
+// ---------- list pane ----------
+function afterStructureChange() { renderList(); redraw(); updatePreview(); scheduleSave();}
+function renderList() {
+listEl.innerHTML = '';
+if (!anns.length) {
+const d = document.createElement('div');
+d.className = 'empty-list';
+d.textContent = img? 'まだ指摘がありません。上のツールで画像の上に置いてください。': '画像を読み込むと、ここに指摘リストが出ます。';
+listEl.appendChild(d);
+return;
+}
+for (const a of anns) {
+const item = document.createElement('div');
+item.className = 'item' + (a.id === selectedId? ' selected': '');
+item.dataset.id = a.id;
+const row = document.createElement('div'); row.className = 'row';
+const badge = document.createElement('span');
+badge.className = 'badge' + (a.type === 'text'? ' text': '');
+badge.textContent = a.type === 'text'? 'T': String(numberOf(a));
+const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = KINDS[a.type];
+const del = document.createElement('button'); del.type = 'button'; del.className = 'del'; del.textContent = '削除';
+del.addEventListener('click', (ev) => { ev.stopPropagation(); deleteAnn(a.id);});
+row.append(badge, kind, del);
+item.appendChild(row);
+if (a.type === 'text') {
+const input = document.createElement('input');
+input.type = 'text'; input.placeholder = '画像上に表示するテキスト'; input.value = a.text || '';
+input.addEventListener('input', () => { a.text = input.value; redraw(); scheduleSave();});
+item.appendChild(input);
+} else {
+const ta = document.createElement('textarea');
+ta.rows = 2; ta.placeholder = '指摘を書く（例：このボタンの余白が狭い）'; ta.value = a.comment || '';
+ta.addEventListener('input', () => { a.comment = ta.value; updatePreview(); scheduleSave();});
+item.appendChild(ta);
+}
+item.addEventListener('pointerdown', () => {
+if (selectedId!== a.id) { selectedId = a.id; updateSelectionUI(); redraw();}
+});
+listEl.appendChild(item);
+}
+}
+function updateSelectionUI() {
+document.querySelectorAll('.item').forEach((el) => el.classList.toggle('selected', Number(el.dataset.id) === selectedId));
+const sel = document.querySelector('.item.selected');
+if (sel) sel.scrollIntoView({ block: 'nearest', behavior: 'smooth'});
+}
+function focusComment(id) {
+const el = document.querySelector('.item[data-id="' + id + '"] textarea,.item[data-id="' + id + '"] input');
+if (el) el.focus();
+}
+function deleteAnn(id) {
+anns = anns.filter((a) => a.id!== id);
+if (selectedId === id) selectedId = null;
+afterStructureChange();
+}
+
+// ---------- prompt ----------
+function composePrompt() {
+const lines = anns.filter(numbered).map((a) => numberOf(a) + '. ' + ((a.comment || '').trim() || '（画像参照）'));
+const body = lines.length? lines.join('\n'): '（まだ指摘がありません）';
+const t = templateEl.value;
+return t.includes('{list}')? t.replace('{list}', body): t + '\n\n\n' + body;
+}
+function updatePreview() { previewEl.textContent = composePrompt();}
+function flash(btn, msg) {
+const orig = btn.textContent;
+btn.textContent = msg; btn.disabled = true;
+setTimeout(() => { btn.textContent = orig; btn.disabled = false;}, 1600);
+}
+$('#copy-prompt').addEventListener('click', async (e) => {
+const btn = e.currentTarget, text = composePrompt();
+try { await navigator.clipboard.writeText(text); flash(btn, 'コピーしました'); return;} catch { /* fall back */}
+const ta = document.createElement('textarea');
+ta.value = text; document.body.appendChild(ta); ta.select();
+try { document.execCommand('copy'); flash(btn, 'コピーしました');} catch { flash(btn, 'コピーできませんでした');}
+ta.remove();
+});
+$('#save-png').addEventListener('click', () => {
+if (!img) return;
+canvas.toBlob((b) => {
+const a = document.createElement('a');
+a.href = URL.createObjectURL(b); a.download = 'ui-shiteki.png'; a.click();
+setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+});
+});
+$('#copy-image').addEventListener('click', (e) => {
+const btn = e.currentTarget;
+if (!img) return;
+canvas.toBlob(async (b) => {
+try {
+await navigator.clipboard.write([new ClipboardItem({ 'image/png': b})]);
+flash(btn, 'コピーしました');
+} catch { flash(btn, 'コピー不可（PNG保存を）');}
+});
+});
+
+// ---------- tools, file inputs, global events ----------
+const HINTS = {
+select: '注釈をクリックで選択、ドラッグで移動、Deleteキーで削除',
+pin: 'クリックした場所にピンを置きます',
+arrow: 'ドラッグで矢印を引きます',
+rect: 'ドラッグで範囲を囲みます',
+text: 'クリックした場所にテキストを置きます',
+};
+function setTool(t) {
+tool = t;
+document.querySelectorAll('.tool').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tool === t)));
+canvas.className = 'tool-' + t;
+$('#tool-hint').textContent = HINTS[t];
+}
+document.querySelectorAll('.tool').forEach((btn) => btn.addEventListener('click', () => setTool(btn.dataset.tool)));
+$('#open-file').addEventListener('click', () => $('#file-input').click());
+$('#file-input').addEventListener('change', (e) => {
+const f = e.target.files[0];
+if (f) loadImageBlob(f);
+e.target.value = '';
+});
+$('#clear-all').addEventListener('click', () => {
+if (!img &&!anns.length) return;
+if (!confirm('画像と注釈をすべて消して、最初からやり直しますか？')) return;
+img = null; imgBlob = null; anns = []; selectedId = null;
+holder.hidden = true; dropzone.hidden = false;
+idbClear(); renderList(); updatePreview();
+});
+document.addEventListener('paste', (e) => {
+const item = Array.from((e.clipboardData && e.clipboardData.items) || []).find((i) => i.type.startsWith('image/'));
+if (item) {
+const f = item.getAsFile();
+if (f) { e.preventDefault(); loadImageBlob(f);}
+}
+});
+stage.addEventListener('dragover', (e) => { e.preventDefault(); stage.classList.add('dragging');});
+stage.addEventListener('dragleave', () => stage.classList.remove('dragging'));
+stage.addEventListener('drop', (e) => {
+e.preventDefault(); stage.classList.remove('dragging');
+const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+if (f) loadImageBlob(f);
+});
+document.addEventListener('keydown', (e) => {
+if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId!== null &&!e.target.closest('textarea, input, [contenteditable]')) {
+e.preventDefault(); deleteAnn(selectedId);
+}
+if (e.key === 'Escape') { selectedId = null; updateSelectionUI(); redraw();}
+});
+templateEl.addEventListener('input', () => { updatePreview(); scheduleSave();});
+
+// ---------- init / restore ----------
+(async function init() {
+setTool('select');
+renderList(); updatePreview();
+const saved = await idbGet();
+if (!saved) return;
+if (saved.template) { templateEl.value = saved.template; updatePreview();}
+if (!saved.imgBlob) return;
+uidSeq = saved.uidSeq || 1;
+if (lastUrl) URL.revokeObjectURL(lastUrl);
+lastUrl = URL.createObjectURL(saved.imgBlob);
+const image = new Image();
+image.onload = () => {
+img = image; imgBlob = saved.imgBlob;
+anns = Array.isArray(saved.anns)? saved.anns: [];
+canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+dropzone.hidden = true; holder.hidden = false;
+$('#restore-note').style.display = 'block';
+renderList(); redraw(); updatePreview();
+};
+image.src = lastUrl;
+})();
+
+</script>
+</body>
+</html>
