@@ -44,10 +44,9 @@
   .item.selected { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(37, 99, 235, .25); }
   .item .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   .badge { min-width: 24px; height: 24px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 700; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; }
-  .badge.text { background: #374151; }
   .item .kind { font-size: 12px; color: var(--muted); }
   .item .del { margin-left: auto; padding: 2px 8px; font-size: 12px; }
-  .item textarea, .item input[type="text"] { width: 100%; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; background: #fff; }
+  .item textarea { width: 100%; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; background: #fff; }
   .empty-list { font-size: 13px; color: var(--muted); border: 1px dashed var(--line); border-radius: 10px; padding: 12px; text-align: center; }
   .prompt-box textarea { width: 100%; font: inherit; font-size: 12.5px; line-height: 1.6; border: 1px solid var(--line); border-radius: 8px; padding: 8px; resize: vertical; }
   .prompt-box pre { white-space: pre-wrap; word-break: break-word; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.6; max-height: 260px; overflow: auto; }
@@ -76,7 +75,6 @@
       <button type="button" class="tool" data-tool="pin" aria-pressed="false">ピン</button>
       <button type="button" class="tool" data-tool="arrow" aria-pressed="false">矢印</button>
       <button type="button" class="tool" data-tool="rect" aria-pressed="false">囲み</button>
-      <button type="button" class="tool" data-tool="text" aria-pressed="false">テキスト</button>
       <span class="hint" id="tool-hint">注釈をクリックで選択、ドラッグで移動、Deleteキーで削除</span>
     </div>
     <div class="stage" id="stage">
@@ -121,9 +119,8 @@ templateEl.value = DEFAULT_TEMPLATE;
 
 let img = null, imgBlob = null, lastUrl = null;
 let anns = [], selectedId = null, tool = 'select', uidSeq = 1;
-const KINDS = { pin: 'ピン', arrow: '矢印', rect: '囲み', text: 'テキスト'};
-const numbered = (a) => a.type!== 'text';
-function numberOf(a) { let n = 0; for (const x of anns) { if (numbered(x)) n++; if (x === a) return n;} return n;}
+const KINDS = { pin: 'ピン', arrow: '矢印', rect: '囲み'};
+function numberOf(a) { return anns.indexOf(a) + 1;}
 function metrics() {
 const W = img? img.naturalWidth: 0;
 return {
@@ -236,27 +233,10 @@ ctx.strokeRect(x - lw * 1.2, y - lw * 1.2, w + lw * 2.4, h + lw * 2.4);
 ctx.restore();
 drawBadge(x, y, numberOf(a), a.id === selectedId);
 }
-function textBox(a) {
-const { fontPx} = metrics();
-ctx.font = '600 ' + fontPx + 'px system-ui, sans-serif';
-const label = a.text && a.text.trim()? a.text: 'テキスト';
-return { w: ctx.measureText(label).width + fontPx * 1.1, h: fontPx * 1.7, label};
-}
-function drawText(a) {
-const { fontPx} = metrics();
-const box = textBox(a);
-ctx.beginPath(); ctx.roundRect(a.x, a.y, box.w, box.h, fontPx * 0.4);
-ctx.fillStyle = 'rgba(17,24,39,0.85)'; ctx.fill();
-if (a.id === selectedId) { ctx.lineWidth = 3; ctx.strokeStyle = '#2563eb'; ctx.stroke();}
-ctx.font = '600 ' + fontPx + 'px system-ui, sans-serif'; ctx.fillStyle = '#fff';
-ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-ctx.fillText(box.label, a.x + fontPx * 0.55, a.y + box.h / 2 + 1);
-}
 function drawAnn(a, draft) {
 if (a.type === 'pin') drawBadge(a.x, a.y, numberOf(a), a.id === selectedId);
 else if (a.type === 'arrow') drawArrow(a, draft);
 else if (a.type === 'rect') drawRect(a, draft);
-else if (a.type === 'text') drawText(a);
 }
 function redraw(draft) {
 if (!img) return;
@@ -287,9 +267,6 @@ const x = Math.min(a.x, a.x + a.w), y = Math.min(a.y, a.y + a.h), w = Math.abs(a
 const tol = Math.max(lw * 2, pinR * 0.7);
 if (Math.hypot(p.x - x, p.y - y) <= pinR * 1.35) return a;
 if (p.x >= x - tol && p.x <= x + w + tol && p.y >= y - tol && p.y <= y + h + tol) return a;
-} else if (a.type === 'text') {
-const box = textBox(a);
-if (p.x >= a.x && p.x <= a.x + box.w && p.y >= a.y && p.y <= a.y + box.h) return a;
 }
 }
 return null;
@@ -305,10 +282,6 @@ const p = canvasPoint(e);
 try { canvas.setPointerCapture(e.pointerId);} catch { /* ignore */}
 if (tool === 'pin') {
 const a = { id: uidSeq++, type: 'pin', x: p.x, y: p.y, comment: ''};
-anns.push(a); selectedId = a.id; afterStructureChange(); focusComment(a.id); return;
-}
-if (tool === 'text') {
-const a = { id: uidSeq++, type: 'text', x: p.x, y: p.y, text: ''};
 anns.push(a); selectedId = a.id; afterStructureChange(); focusComment(a.id); return;
 }
 if (tool === 'arrow' || tool === 'rect') { drag = { mode: 'draw', start: p, draft: null}; return;}
@@ -367,24 +340,17 @@ item.className = 'item' + (a.id === selectedId? ' selected': '');
 item.dataset.id = a.id;
 const row = document.createElement('div'); row.className = 'row';
 const badge = document.createElement('span');
-badge.className = 'badge' + (a.type === 'text'? ' text': '');
-badge.textContent = a.type === 'text'? 'T': String(numberOf(a));
+badge.className = 'badge';
+badge.textContent = String(numberOf(a));
 const kind = document.createElement('span'); kind.className = 'kind'; kind.textContent = KINDS[a.type];
 const del = document.createElement('button'); del.type = 'button'; del.className = 'del'; del.textContent = '削除';
 del.addEventListener('click', (ev) => { ev.stopPropagation(); deleteAnn(a.id);});
 row.append(badge, kind, del);
 item.appendChild(row);
-if (a.type === 'text') {
-const input = document.createElement('input');
-input.type = 'text'; input.placeholder = '画像上に表示するテキスト'; input.value = a.text || '';
-input.addEventListener('input', () => { a.text = input.value; redraw(); scheduleSave();});
-item.appendChild(input);
-} else {
 const ta = document.createElement('textarea');
 ta.rows = 2; ta.placeholder = '指摘を書く（例：このボタンの余白が狭い）'; ta.value = a.comment || '';
 ta.addEventListener('input', () => { a.comment = ta.value; updatePreview(); scheduleSave();});
 item.appendChild(ta);
-}
 item.addEventListener('pointerdown', () => {
 if (selectedId!== a.id) { selectedId = a.id; updateSelectionUI(); redraw();}
 });
@@ -397,7 +363,7 @@ const sel = document.querySelector('.item.selected');
 if (sel) sel.scrollIntoView({ block: 'nearest', behavior: 'smooth'});
 }
 function focusComment(id) {
-const el = document.querySelector('.item[data-id="' + id + '"] textarea,.item[data-id="' + id + '"] input');
+const el = document.querySelector('.item[data-id="' + id + '"] textarea');
 if (el) el.focus();
 }
 function deleteAnn(id) {
@@ -408,7 +374,7 @@ afterStructureChange();
 
 // ---------- prompt ----------
 function composePrompt() {
-const lines = anns.filter(numbered).map((a) => numberOf(a) + '. ' + ((a.comment || '').trim() || '（画像参照）'));
+const lines = anns.map((a) => numberOf(a) + '. ' + ((a.comment || '').trim() || '（画像参照）'));
 const body = lines.length? lines.join('\n'): '（まだ指摘がありません）';
 const t = templateEl.value;
 return t.includes('{list}')? t.replace('{list}', body): t + '\n\n\n' + body;
@@ -452,7 +418,6 @@ select: '注釈をクリックで選択、ドラッグで移動、Deleteキー�
 pin: 'クリックした場所にピンを置きます',
 arrow: 'ドラッグで矢印を引きます',
 rect: 'ドラッグで範囲を囲みます',
-text: 'クリックした場所にテキストを置きます',
 };
 function setTool(t) {
 tool = t;
@@ -510,7 +475,7 @@ lastUrl = URL.createObjectURL(saved.imgBlob);
 const image = new Image();
 image.onload = () => {
 img = image; imgBlob = saved.imgBlob;
-anns = Array.isArray(saved.anns)? saved.anns: [];
+anns = (Array.isArray(saved.anns)? saved.anns: []).filter((a) => a.type!== 'text');
 canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
 dropzone.hidden = true; holder.hidden = false;
 $('#restore-note').style.display = 'block';
